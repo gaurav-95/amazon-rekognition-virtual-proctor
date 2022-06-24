@@ -293,6 +293,9 @@ const searchForIndexedFaces = async (imageBytes) => {
 
 exports.processHandler = async (event) => {
   const body = JSON.parse(event.body);
+
+  console.log("HERE IS THE BODY: " + JSON.stringify(body));
+
   const imageBytes = Buffer.from(body.image, "base64");
 
   const result = await Promise.all([
