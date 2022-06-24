@@ -1,0 +1,1545 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "This template deploys the Amazon Rekognition Virtual Proctor (uksb-1qoed5fri)",
+    "Parameters": {
+        "MinConfidence": {
+            "Description": "Specifies the minimum confidence level for the labels to return",
+            "Type": "Number",
+            "Default": 85,
+            "MinValue": 0,
+            "MaxValue": 100
+        },
+        "ResourcePrefix": {
+            "Description": "AWS Resources are named based on the value of this parameter. You must customise this if you are launching more than one instance of the stack within the same account.",
+            "Type": "String",
+            "Default": "UnyProctor",
+            "AllowedPattern": "^[a-zA-Z0-9_]*$"
+        },
+        "ObjectsOfInterestLabels": {
+            "Description": "Comma-delimited list of labels used to detect Objects of interest",
+            "Type": "CommaDelimitedList",
+            "Default": "Mobile Phone,Cell Phone,Headphones"
+        },
+        "CreateCloudFrontDistribution": {
+            "Description": "Creates a CloudFront distribution for accessing the web interface of the demo. This must be enabled if S3 Block Public Access is enabled at an account level.",
+            "Type": "String",
+            "Default": "true",
+            "AllowedValues": [
+                "true",
+                "false"
+            ]
+        },
+        "PreBuiltArtefactsBucketOverride": {
+            "Description": "The name of an S3 Bucket containing the built web-ui. Use this to deploy a modified version of the Virtual Proctor web ui.  The default is to use the Virtual Proctor version from a predefined bucket in the given region (for example solution-builders-us-west-1)\n",
+            "Type": "String",
+            "Default": "false"
+        },
+        "AdminEmail": {
+            "Description": "Creates a username to be used for Authentication. It needs to be an e-mail address.",
+            "Type": "String",
+            "AllowedPattern": "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+        }
+    },
+    "Outputs": {
+        "api": {
+            "Value": {
+                "Fn::Sub": "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+            },
+            "Description": "Virtual Proctor API"
+        },
+        "url": {
+            "Value": {
+                "Fn::If": [
+                    "WithCloudFront",
+                    {
+                        "Fn::Sub": "https://${CloudFrontDistribution.DomainName}"
+                    },
+                    {
+                        "Fn::Sub": "https://${WebUIBucket.RegionalDomainName}/index.html"
+                    }
+                ]
+            },
+            "Description": "Virtual Proctor URL"
+        }
+    },
+    "Resources": {
+        "ProcessImageFunctionGetPermissionProd": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "Action": "lambda:InvokeFunction",
+                "FunctionName": {
+                    "Ref": "ProcessImageFunction"
+                },
+                "Principal": "apigateway.amazonaws.com",
+                "SourceArn": {
+                    "Fn::Sub": [
+                        "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${__ApiId__}/${__Stage__}/POST/process",
+                        {
+                            "__ApiId__": {
+                                "Ref": "ServerlessRestApi"
+                            },
+                            "__Stage__": "*"
+                        }
+                    ]
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "26cb7246-6dc9-4297-8649-4de0ebedd4ac"
+                }
+            }
+        },
+        "LambdaSetupRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "LambdaSetupRolePolicy0",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:PutObject",
+                                        "s3:PutObjectAcl",
+                                        "s3:DeleteObject",
+                                        "s3:ListBucket"
+                                    ],
+                                    "Resource": [
+                                        {
+                                            "Fn::Sub": "arn:aws:s3:::${WebUIBucket}"
+                                        },
+                                        {
+                                            "Fn::Sub": "arn:aws:s3:::${WebUIBucket}/*"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": {
+                                        "Fn::If": [
+                                            "DefaultPreBuiltArtefactsBucket",
+                                            {
+                                                "Fn::Sub": "arn:aws:s3:::solution-builders-${AWS::Region}/*"
+                                            },
+                                            {
+                                                "Fn::Sub": "arn:aws:s3:::${PreBuiltArtefactsBucketOverride}/*"
+                                            }
+                                        ]
+                                    }
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "rekognition:CreateCollection",
+                                        "rekognition:DeleteCollection"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Sub": "arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:collection/${ResourcePrefix}"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "lambda:createdBy",
+                        "Value": "SAM"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "087c19c7-6290-4d93-988c-8dcb3c0fcb3c"
+                }
+            }
+        },
+        "ProcessImageFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Code": {
+                    "S3Bucket": "solution-builders-ap-south-1",
+                    "S3Key": "amazon-rekognition-virtual-proctor/v2.0/3ce79e107e9c9d8e1984289ee6057895"
+                },
+                "Handler": "index.processHandler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "ProcessImageFunctionRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "nodejs12.x",
+                "Timeout": 30,
+                "Environment": {
+                    "Variables": {
+                        "COLLECTION_ID": {
+                            "Ref": "ResourcePrefix"
+                        },
+                        "FACES_TABLENAME": {
+                            "Ref": "FacesTable"
+                        },
+                        "MIN_CONFIDENCE": {
+                            "Ref": "MinConfidence"
+                        },
+                        "OBJECTS_OF_INTEREST_LABELS": {
+                            "Fn::Join": [
+                                ",",
+                                {
+                                    "Ref": "ObjectsOfInterestLabels"
+                                }
+                            ]
+                        },
+                        "REGION": {
+                            "Ref": "AWS::Region"
+                        },
+                        "VERSION": "2.0"
+                    }
+                },
+                "Tags": [
+                    {
+                        "Key": "lambda:createdBy",
+                        "Value": "SAM"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "f6a668c2-6a32-4766-b722-55c53cf95ba4"
+                }
+            }
+        },
+        "SetupRekognitionAndWebUI": {
+            "Type": "Custom::Setup",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "LambdaSetup",
+                        "Arn"
+                    ]
+                },
+                "Region": {
+                    "Ref": "AWS::Region"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "47c580e0-6537-46c5-952d-3707d7d6e3ba"
+                }
+            }
+        },
+        "CognitoIdentityPool": {
+            "Type": "AWS::Cognito::IdentityPool",
+            "Properties": {
+                "IdentityPoolName": {
+                    "Fn::Sub": "RekogIdentityPool${ResourcePrefix}"
+                },
+                "AllowUnauthenticatedIdentities": false,
+                "CognitoIdentityProviders": [
+                    {
+                        "ClientId": {
+                            "Ref": "CognitoUserPoolClient"
+                        },
+                        "ProviderName": {
+                            "Fn::GetAtt": [
+                                "CognitoUserPool",
+                                "ProviderName"
+                            ]
+                        }
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "53b693a2-3b2a-4422-863a-d7ded7ad1899"
+                }
+            }
+        },
+        "ProcessImageFunctionRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "ProcessImageFunctionRolePolicy0",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "dynamodb:GetItem",
+                                        "dynamodb:Scan",
+                                        "dynamodb:Query",
+                                        "dynamodb:BatchGetItem",
+                                        "dynamodb:DescribeTable"
+                                    ],
+                                    "Resource": [
+                                        {
+                                            "Fn::Sub": [
+                                                "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableName}",
+                                                {
+                                                    "tableName": {
+                                                        "Ref": "FacesTable"
+                                                    }
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "Fn::Sub": [
+                                                "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableName}/index/*",
+                                                {
+                                                    "tableName": {
+                                                        "Ref": "FacesTable"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": "ProcessImageFunctionRolePolicy1",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "rekognition:ListCollections",
+                                        "rekognition:ListFaces",
+                                        "rekognition:SearchFaces",
+                                        "rekognition:SearchFacesByImage"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Sub": [
+                                            "arn:${AWS::Partition}:rekognition:${AWS::Region}:${AWS::AccountId}:collection/${collectionId}",
+                                            {
+                                                "collectionId": {
+                                                    "Ref": "ResourcePrefix"
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": "ProcessImageFunctionRolePolicy2",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "rekognition:DetectFaces",
+                                        "rekognition:DetectLabels",
+                                        "rekognition:DetectModerationLabels",
+                                        "rekognition:DetectText"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "lambda:createdBy",
+                        "Value": "SAM"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "be9f10d3-24cb-4f86-b853-e53edec25c80"
+                }
+            }
+        },
+        "ServerlessRestApiProdStage": {
+            "Type": "AWS::ApiGateway::Stage",
+            "Properties": {
+                "DeploymentId": {
+                    "Ref": "ServerlessRestApiDeployment00f565cc7b"
+                },
+                "RestApiId": {
+                    "Ref": "ServerlessRestApi"
+                },
+                "StageName": "Prod"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "c8c61dd4-fab4-49bb-b2c8-665d90a65c4f"
+                }
+            }
+        },
+        "CloudFrontOriginAccessIdentity": {
+            "Type": "AWS::CloudFront::CloudFrontOriginAccessIdentity",
+            "Condition": "WithCloudFront",
+            "Properties": {
+                "CloudFrontOriginAccessIdentityConfig": {
+                    "Comment": {
+                        "Ref": "WebUIBucket"
+                    }
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "6d6122de-b331-441d-b62e-00e5c254b7a9"
+                }
+            }
+        },
+        "CognitoUserPool": {
+            "Type": "AWS::Cognito::UserPool",
+            "Properties": {
+                "UserPoolName": {
+                    "Fn::Sub": "${ResourcePrefix}RekogUsersPool"
+                },
+                "AdminCreateUserConfig": {
+                    "AllowAdminCreateUserOnly": true,
+                    "InviteMessageTemplate": {
+                        "EmailMessage": {
+                            "Fn::Sub": [
+                                "Your Amazon Rekognition Virtual Proctor username is {username} and the temporary password is {####}<br><br>Click here to access the web interface: <a href=\"${UIUrl}\">${UIUrl}</a>",
+                                {
+                                    "UIUrl": {
+                                        "Fn::If": [
+                                            "WithCloudFront",
+                                            {
+                                                "Fn::Sub": "https://${CloudFrontDistribution.DomainName}"
+                                            },
+                                            {
+                                                "Fn::Sub": "https://${WebUIBucket.RegionalDomainName}/index.html"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        "EmailSubject": "Your temporary password for Amazon Rekognition Virtual Proctor",
+                        "SMSMessage": "Your Amazon Rekognition Virtual Proctor username is {username} and the temporary password is {####}"
+                    }
+                },
+                "AutoVerifiedAttributes": [
+                    "email"
+                ],
+                "Policies": {
+                    "PasswordPolicy": {
+                        "MinimumLength": 8,
+                        "RequireLowercase": false,
+                        "RequireNumbers": false,
+                        "RequireSymbols": false,
+                        "RequireUppercase": false
+                    }
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "9bf96a4c-3afe-471c-b7f6-aa2cc1226346"
+                }
+            }
+        },
+        "ApiGatewayInvokeRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/AmazonAPIGatewayInvokeFullAccess"
+                ],
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Federated": [
+                                    "cognito-identity.amazonaws.com"
+                                ]
+                            },
+                            "Action": "sts:AssumeRoleWithWebIdentity",
+                            "Condition": {
+                                "StringEquals": {
+                                    "cognito-identity.amazonaws.com:aud": {
+                                        "Ref": "CognitoIdentityPool"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "35891086-bb07-4063-9ed1-cc3746506e36"
+                }
+            }
+        },
+        "ServerlessRestApiDeployment00f565cc7b": {
+            "Type": "AWS::ApiGateway::Deployment",
+            "Properties": {
+                "Description": "RestApi deployment id: 00f565cc7bd7fa1edfbcc5e56174b1cf7b4898c8",
+                "RestApiId": {
+                    "Ref": "ServerlessRestApi"
+                },
+                "StageName": "Stage"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "94279ef5-161b-444f-b5b6-86d7be46805c"
+                }
+            }
+        },
+        "IndexFaceFunctionRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "IndexFaceFunctionRolePolicy0",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "dynamodb:PutItem",
+                                        "dynamodb:UpdateItem",
+                                        "dynamodb:BatchWriteItem"
+                                    ],
+                                    "Resource": [
+                                        {
+                                            "Fn::Sub": [
+                                                "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableName}",
+                                                {
+                                                    "tableName": {
+                                                        "Ref": "FacesTable"
+                                                    }
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "Fn::Sub": [
+                                                "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableName}/index/*",
+                                                {
+                                                    "tableName": {
+                                                        "Ref": "FacesTable"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": "IndexFaceFunctionRolePolicy1",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "rekognition:CreateCollection",
+                                        "rekognition:IndexFaces"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Sub": [
+                                            "arn:${AWS::Partition}:rekognition:${AWS::Region}:${AWS::AccountId}:collection/${collectionId}",
+                                            {
+                                                "collectionId": {
+                                                    "Ref": "ResourcePrefix"
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "lambda:createdBy",
+                        "Value": "SAM"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "596ed8cc-8cc9-4ab4-86f6-c67510eea726"
+                }
+            }
+        },
+        "CloudFrontDistribution": {
+            "Type": "AWS::CloudFront::Distribution",
+            "Condition": "WithCloudFront",
+            "Properties": {
+                "DistributionConfig": {
+                    "Origins": [
+                        {
+                            "DomainName": {
+                                "Fn::GetAtt": [
+                                    "WebUIBucket",
+                                    "RegionalDomainName"
+                                ]
+                            },
+                            "Id": {
+                                "Fn::Sub": "myS3Origin-${ResourcePrefix}"
+                            },
+                            "S3OriginConfig": {
+                                "OriginAccessIdentity": {
+                                    "Fn::Sub": "origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}"
+                                }
+                            }
+                        }
+                    ],
+                    "Enabled": true,
+                    "HttpVersion": "http2",
+                    "Comment": "The Distribution for the Rekognition Meter Web UI",
+                    "DefaultRootObject": "index.html",
+                    "DefaultCacheBehavior": {
+                        "AllowedMethods": [
+                            "HEAD",
+                            "GET",
+                            "OPTIONS"
+                        ],
+                        "TargetOriginId": {
+                            "Fn::Sub": "myS3Origin-${ResourcePrefix}"
+                        },
+                        "ForwardedValues": {
+                            "QueryString": false,
+                            "Cookies": {
+                                "Forward": "none"
+                            }
+                        },
+                        "ViewerProtocolPolicy": "redirect-to-https"
+                    },
+                    "PriceClass": "PriceClass_All",
+                    "ViewerCertificate": {
+                        "CloudFrontDefaultCertificate": true
+                    }
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "cfea3cc4-4438-4608-b8de-03d35d14d782"
+                }
+            }
+        },
+        "WebUIBucketReadPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "Condition": "WithCloudFront",
+            "Properties": {
+                "Bucket": {
+                    "Ref": "WebUIBucket"
+                },
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": "s3:GetObject",
+                            "Effect": "Allow",
+                            "Resource": {
+                                "Fn::Sub": "arn:aws:s3:::${WebUIBucket}/*"
+                            },
+                            "Principal": {
+                                "CanonicalUser": {
+                                    "Fn::GetAtt": [
+                                        "CloudFrontOriginAccessIdentity",
+                                        "S3CanonicalUserId"
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "f81c73af-1dbf-4382-88b7-6efb5609cc97"
+                }
+            }
+        },
+        "ServerlessRestApi": {
+            "Type": "AWS::ApiGateway::RestApi",
+            "Properties": {
+                "Body": {
+                    "info": {
+                        "version": "1.0",
+                        "title": {
+                            "Ref": "AWS::StackName"
+                        }
+                    },
+                    "paths": {
+                        "/faces/index": {
+                            "post": {
+                                "x-amazon-apigateway-integration": {
+                                    "httpMethod": "POST",
+                                    "type": "aws_proxy",
+                                    "uri": {
+                                        "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IndexFaceFunction.Arn}/invocations"
+                                    }
+                                },
+                                "security": [
+                                    {
+                                        "CognitoAuthorizer": []
+                                    }
+                                ],
+                                "responses": {}
+                            },
+                            "options": {
+                                "x-amazon-apigateway-integration": {
+                                    "type": "mock",
+                                    "requestTemplates": {
+                                        "application/json": "{\n  \"statusCode\" : 200\n}\n"
+                                    },
+                                    "responses": {
+                                        "default": {
+                                            "statusCode": "200",
+                                            "responseTemplates": {
+                                                "application/json": "{}\n"
+                                            },
+                                            "responseParameters": {
+                                                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                                                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                                                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                                            }
+                                        }
+                                    }
+                                },
+                                "consumes": [
+                                    "application/json"
+                                ],
+                                "summary": "CORS support",
+                                "responses": {
+                                    "200": {
+                                        "headers": {
+                                            "Access-Control-Allow-Origin": {
+                                                "type": "string"
+                                            },
+                                            "Access-Control-Allow-Headers": {
+                                                "type": "string"
+                                            },
+                                            "Access-Control-Allow-Methods": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "description": "Default response for CORS method"
+                                    }
+                                },
+                                "produces": [
+                                    "application/json"
+                                ]
+                            }
+                        },
+                        "/process": {
+                            "post": {
+                                "x-amazon-apigateway-integration": {
+                                    "httpMethod": "POST",
+                                    "type": "aws_proxy",
+                                    "uri": {
+                                        "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProcessImageFunction.Arn}/invocations"
+                                    }
+                                },
+                                "security": [
+                                    {
+                                        "CognitoAuthorizer": []
+                                    }
+                                ],
+                                "responses": {}
+                            },
+                            "options": {
+                                "x-amazon-apigateway-integration": {
+                                    "type": "mock",
+                                    "requestTemplates": {
+                                        "application/json": "{\n  \"statusCode\" : 200\n}\n"
+                                    },
+                                    "responses": {
+                                        "default": {
+                                            "statusCode": "200",
+                                            "responseTemplates": {
+                                                "application/json": "{}\n"
+                                            },
+                                            "responseParameters": {
+                                                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                                                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                                                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                                            }
+                                        }
+                                    }
+                                },
+                                "consumes": [
+                                    "application/json"
+                                ],
+                                "summary": "CORS support",
+                                "responses": {
+                                    "200": {
+                                        "headers": {
+                                            "Access-Control-Allow-Origin": {
+                                                "type": "string"
+                                            },
+                                            "Access-Control-Allow-Headers": {
+                                                "type": "string"
+                                            },
+                                            "Access-Control-Allow-Methods": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "description": "Default response for CORS method"
+                                    }
+                                },
+                                "produces": [
+                                    "application/json"
+                                ]
+                            }
+                        }
+                    },
+                    "swagger": "2.0",
+                    "securityDefinitions": {
+                        "CognitoAuthorizer": {
+                            "in": "header",
+                            "type": "apiKey",
+                            "name": "Authorization",
+                            "x-amazon-apigateway-authorizer": {
+                                "providerARNs": [
+                                    {
+                                        "Fn::GetAtt": [
+                                            "CognitoUserPool",
+                                            "Arn"
+                                        ]
+                                    }
+                                ],
+                                "type": "cognito_user_pools"
+                            },
+                            "x-amazon-apigateway-authtype": "cognito_user_pools"
+                        }
+                    },
+                    "x-amazon-apigateway-gateway-responses": {
+                        "DEFAULT_4XX": {
+                            "responseParameters": {
+                                "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                                "gatewayresponse.header.Access-Control-Allow-Methods": "'*'",
+                                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
+                            },
+                            "responseTemplates": {
+                                "application/json": "{ \"Message\": $context.error.messageString }"
+                            }
+                        },
+                        "BAD_REQUEST_PARAMETERS": {
+                            "responseParameters": {
+                                "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                                "gatewayresponse.header.Access-Control-Allow-Methods": "'*'",
+                                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
+                            },
+                            "responseTemplates": {
+                                "application/json": "{ \"Message\": $context.error.messageString }"
+                            },
+                            "statusCode": "422"
+                        },
+                        "BAD_REQUEST_BODY": {
+                            "responseParameters": {
+                                "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                                "gatewayresponse.header.Access-Control-Allow-Methods": "'*'",
+                                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
+                            },
+                            "responseTemplates": {
+                                "application/json": "{ \"Message\": $context.error.messageString }"
+                            },
+                            "statusCode": "422"
+                        }
+                    }
+                },
+                "Parameters": {
+                    "endpointConfigurationTypes": "REGIONAL"
+                },
+                "EndpointConfiguration": {
+                    "Types": [
+                        "REGIONAL"
+                    ]
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "9802c6eb-4648-4250-9439-4ed547e56abd"
+                }
+            }
+        },
+        "WebUIBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "VersioningConfiguration": {
+                    "Status": "Enabled"
+                },
+                "BucketEncryption": {
+                    "ServerSideEncryptionConfiguration": [
+                        {
+                            "ServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "AES256"
+                            }
+                        }
+                    ]
+                },
+                "CorsConfiguration": {
+                    "CorsRules": [
+                        {
+                            "AllowedHeaders": [
+                                "*"
+                            ],
+                            "AllowedMethods": [
+                                "GET"
+                            ],
+                            "AllowedOrigins": [
+                                "*"
+                            ],
+                            "Id": "RekogCorsRule",
+                            "MaxAge": 3600
+                        }
+                    ]
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "0df88afe-c3ec-4b70-b36a-7d2914fedfd5"
+                }
+            }
+        },
+        "CognitoIdentityPoolRole": {
+            "Type": "AWS::Cognito::IdentityPoolRoleAttachment",
+            "Properties": {
+                "IdentityPoolId": {
+                    "Ref": "CognitoIdentityPool"
+                },
+                "Roles": {
+                    "authenticated": {
+                        "Fn::GetAtt": [
+                            "ApiGatewayInvokeRole",
+                            "Arn"
+                        ]
+                    },
+                    "unauthenticated": {
+                        "Fn::GetAtt": [
+                            "ApiGatewayInvokeRole",
+                            "Arn"
+                        ]
+                    }
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "bef0f3a9-0ddf-4ec0-87d6-027c105db1bc"
+                }
+            }
+        },
+        "FacesTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "ExternalImageId",
+                        "AttributeType": "S"
+                    }
+                ],
+                "KeySchema": [
+                    {
+                        "AttributeName": "ExternalImageId",
+                        "KeyType": "HASH"
+                    }
+                ],
+                "BillingMode": "PAY_PER_REQUEST"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "28483901-f93d-409c-8b41-be474f2d3a4d"
+                }
+            }
+        },
+        "IndexFaceFunctionGetPermissionProd": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "Action": "lambda:InvokeFunction",
+                "FunctionName": {
+                    "Ref": "IndexFaceFunction"
+                },
+                "Principal": "apigateway.amazonaws.com",
+                "SourceArn": {
+                    "Fn::Sub": [
+                        "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${__ApiId__}/${__Stage__}/POST/faces/index",
+                        {
+                            "__ApiId__": {
+                                "Ref": "ServerlessRestApi"
+                            },
+                            "__Stage__": "*"
+                        }
+                    ]
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "f3dd293e-d02d-42c3-a7db-745029155a83"
+                }
+            }
+        },
+        "CognitoUserPoolUser": {
+            "Type": "AWS::Cognito::UserPoolUser",
+            "DependsOn": "SetupRekognitionAndWebUI",
+            "Properties": {
+                "Username": {
+                    "Ref": "AdminEmail"
+                },
+                "UserPoolId": {
+                    "Ref": "CognitoUserPool"
+                },
+                "DesiredDeliveryMediums": [
+                    "EMAIL"
+                ],
+                "UserAttributes": [
+                    {
+                        "Name": "email",
+                        "Value": {
+                            "Ref": "AdminEmail"
+                        }
+                    },
+                    {
+                        "Name": "email_verified",
+                        "Value": "true"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "a7128226-2669-48ee-ab79-463a1997405d"
+                }
+            }
+        },
+        "CognitoUserPoolClient": {
+            "Type": "AWS::Cognito::UserPoolClient",
+            "Properties": {
+                "UserPoolId": {
+                    "Ref": "CognitoUserPool"
+                },
+                "ClientName": {
+                    "Fn::Sub": "${ResourcePrefix}RekogUsersPoolClient"
+                },
+                "GenerateSecret": false,
+                "RefreshTokenValidity": 1
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "378cd84d-149d-4c14-a1a9-0dbbb47459e9"
+                }
+            }
+        },
+        "IndexFaceFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Code": {
+                    "S3Bucket": "solution-builders-ap-south-1",
+                    "S3Key": "amazon-rekognition-virtual-proctor/v2.0/3ce79e107e9c9d8e1984289ee6057895"
+                },
+                "Handler": "index.indexHandler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "IndexFaceFunctionRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "nodejs12.x",
+                "Timeout": 30,
+                "Environment": {
+                    "Variables": {
+                        "COLLECTION_ID": {
+                            "Ref": "ResourcePrefix"
+                        },
+                        "FACES_TABLENAME": {
+                            "Ref": "FacesTable"
+                        },
+                        "MIN_CONFIDENCE": {
+                            "Ref": "MinConfidence"
+                        },
+                        "OBJECTS_OF_INTEREST_LABELS": {
+                            "Fn::Join": [
+                                ",",
+                                {
+                                    "Ref": "ObjectsOfInterestLabels"
+                                }
+                            ]
+                        },
+                        "REGION": {
+                            "Ref": "AWS::Region"
+                        },
+                        "VERSION": "2.0"
+                    }
+                },
+                "Tags": [
+                    {
+                        "Key": "lambda:createdBy",
+                        "Value": "SAM"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "094fb7c4-794a-41c6-ab2a-26300b435ef8"
+                }
+            }
+        },
+        "LambdaSetup": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Code": {
+                    "S3Bucket": "solution-builders-ap-south-1",
+                    "S3Key": "amazon-rekognition-virtual-proctor/v2.0/4192efdf347a0a5d36f6e837a209497c"
+                },
+                "Description": "Custom Lambda resource for the Virtual Proctor Cloudformation Stack",
+                "Handler": "index.handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaSetupRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "nodejs12.x",
+                "Timeout": 900,
+                "Environment": {
+                    "Variables": {
+                        "COLLECTION_ID": {
+                            "Ref": "ResourcePrefix"
+                        },
+                        "FACES_TABLENAME": {
+                            "Ref": "FacesTable"
+                        },
+                        "MIN_CONFIDENCE": {
+                            "Ref": "MinConfidence"
+                        },
+                        "OBJECTS_OF_INTEREST_LABELS": {
+                            "Fn::Join": [
+                                ",",
+                                {
+                                    "Ref": "ObjectsOfInterestLabels"
+                                }
+                            ]
+                        },
+                        "REGION": {
+                            "Ref": "AWS::Region"
+                        },
+                        "VERSION": "2.0",
+                        "API_GATEWAY": {
+                            "Fn::Sub": "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+                        },
+                        "COGNITO_IDENTITY_POOL": {
+                            "Ref": "CognitoIdentityPool"
+                        },
+                        "COGNITO_USERPOOL_ID": {
+                            "Ref": "CognitoUserPool"
+                        },
+                        "COGNITO_USERPOOLCLIENT_ID": {
+                            "Ref": "CognitoUserPoolClient"
+                        },
+                        "CREATE_CLOUDFRONT_DISTRIBUTION": {
+                            "Ref": "CreateCloudFrontDistribution"
+                        },
+                        "FROM_BUCKET": {
+                            "Fn::If": [
+                                "DefaultPreBuiltArtefactsBucket",
+                                {
+                                    "Fn::Sub": "solution-builders-${AWS::Region}"
+                                },
+                                {
+                                    "Ref": "PreBuiltArtefactsBucketOverride"
+                                }
+                            ]
+                        },
+                        "TO_BUCKET": {
+                            "Ref": "WebUIBucket"
+                        }
+                    }
+                },
+                "Tags": [
+                    {
+                        "Key": "lambda:createdBy",
+                        "Value": "SAM"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "7f22bba7-920d-47db-9d32-62580ad0f325"
+                }
+            }
+        }
+    },
+    "Conditions": {
+        "WithCloudFront": {
+            "Fn::Equals": [
+                {
+                    "Ref": "CreateCloudFrontDistribution"
+                },
+                "true"
+            ]
+        },
+        "DefaultPreBuiltArtefactsBucket": {
+            "Fn::Equals": [
+                {
+                    "Ref": "PreBuiltArtefactsBucketOverride"
+                },
+                "false"
+            ]
+        }
+    },
+    "Metadata": {
+        "AWS::CloudFormation::Designer": {
+            "28483901-f93d-409c-8b41-be474f2d3a4d": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 270,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "0df88afe-c3ec-4b70-b36a-7d2914fedfd5": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 270,
+                    "y": 210
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "cfea3cc4-4438-4608-b8de-03d35d14d782": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 60,
+                    "y": 300
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "596ed8cc-8cc9-4ab4-86f6-c67510eea726": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 390,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "094fb7c4-794a-41c6-ab2a-26300b435ef8": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 390,
+                    "y": 210
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "9bf96a4c-3afe-471c-b7f6-aa2cc1226346": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 180,
+                    "y": 330
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "378cd84d-149d-4c14-a1a9-0dbbb47459e9": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 300,
+                    "y": 330
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "9bf96a4c-3afe-471c-b7f6-aa2cc1226346"
+                ]
+            },
+            "9802c6eb-4648-4250-9439-4ed547e56abd": {
+                "size": {
+                    "width": 150,
+                    "height": 150
+                },
+                "position": {
+                    "x": 60,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "f3dd293e-d02d-42c3-a7db-745029155a83": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 420,
+                    "y": 330
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "094fb7c4-794a-41c6-ab2a-26300b435ef8"
+                ]
+            },
+            "94279ef5-161b-444f-b5b6-86d7be46805c": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 60,
+                    "y": 420
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "6d6122de-b331-441d-b62e-00e5c254b7a9": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 180,
+                    "y": 450
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "f81c73af-1dbf-4382-88b7-6efb5609cc97": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 300,
+                    "y": 450
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "0df88afe-c3ec-4b70-b36a-7d2914fedfd5"
+                ]
+            },
+            "c8c61dd4-fab4-49bb-b2c8-665d90a65c4f": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 420,
+                    "y": 450
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "be9f10d3-24cb-4f86-b853-e53edec25c80": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 510,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "53b693a2-3b2a-4422-863a-d7ded7ad1899": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 510,
+                    "y": 210
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "35891086-bb07-4063-9ed1-cc3746506e36": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 540,
+                    "y": 330
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "bef0f3a9-0ddf-4ec0-87d6-027c105db1bc": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 540,
+                    "y": 450
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "53b693a2-3b2a-4422-863a-d7ded7ad1899"
+                ]
+            },
+            "f6a668c2-6a32-4766-b722-55c53cf95ba4": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 60,
+                    "y": 540
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "087c19c7-6290-4d93-988c-8dcb3c0fcb3c": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 180,
+                    "y": 570
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "7f22bba7-920d-47db-9d32-62580ad0f325": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 300,
+                    "y": 570
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "47c580e0-6537-46c5-952d-3707d7d6e3ba": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 420,
+                    "y": 570
+                },
+                "z": 1,
+                "embeds": []
+            },
+            "a7128226-2669-48ee-ab79-463a1997405d": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 540,
+                    "y": 570
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "9bf96a4c-3afe-471c-b7f6-aa2cc1226346"
+                ],
+                "dependson": [
+                    "47c580e0-6537-46c5-952d-3707d7d6e3ba"
+                ]
+            },
+            "26cb7246-6dc9-4297-8649-4de0ebedd4ac": {
+                "size": {
+                    "width": 60,
+                    "height": 60
+                },
+                "position": {
+                    "x": 630,
+                    "y": 90
+                },
+                "z": 1,
+                "embeds": [],
+                "isassociatedwith": [
+                    "f6a668c2-6a32-4766-b722-55c53cf95ba4"
+                ]
+            }
+        }
+    }
+}

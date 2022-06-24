@@ -1,4 +1,5 @@
 const AWS = require("aws-sdk");
+const { stringify } = require("uuid");
 const uuid = require("uuid").v4;
 
 const {
@@ -66,20 +67,97 @@ const fetchFaces = async (imageBytes) => {
     TestName: "Face Detection",
   };
 
+  const eyesTest = {
+    TestName: "Eyes Open Detection",
+  };
+
+  const mouthTest = {
+    TestName: "Mouth Open Detection",
+  };
+
+  const pitchTest = {
+    TestName: "Pitch Detection",
+  };
+
+  const rollTest = {
+    TestName: "Roll Detection"
+  }
+
+  const yawTest = {
+    TestName: "Yaw Detection"
+  }
+
+  const emotionTest = {
+    TestName: "Emotion Detection"
+  }
+
   const detectFaces = () =>
-    rekognition.detectFaces({ Image: { Bytes: imageBytes } }).promise();
+    rekognition.detectFaces({ Image: { Bytes: imageBytes },
+      Attributes: ['ALL'] }).promise();
 
   try {
     const faces = await detectFaces();
     const nFaces = faces.FaceDetails.length;
+    const eyes = faces.FaceDetails[0].EyesOpen.Value;
+    const mouth = faces.FaceDetails[0].MouthOpen.Value;
+    const posePitch = faces.FaceDetails[0].Pose.Pitch;
+    const poseRoll = faces.FaceDetails[0].Pose.Roll;
+    const poseYaw = faces.FaceDetails[0].Pose.Yaw;
+    const emotion = faces.FaceDetails[0].Emotions[0].Type;
+
     facesTest.Success = nFaces === 1;
+    eyesTest.Success = eyes ? true : false;
+    mouthTest.Success = mouth ? true : false;
+    pitchTest.Success = posePitch ? true : false;
+    rollTest.Success = poseRoll ? true : false;
+    yawTest.Success = poseYaw ? true : false;
+    emotionTest.Success = emotion ? true : false;
+
     facesTest.Details = nFaces;
+    eyesTest.Details = eyes ? "Yes" : "No"
+    mouthTest.Details = mouth ? "Yes" : "No"
+    pitchTest.Details = posePitch
+    rollTest.Details = poseRoll
+    yawTest.Details = poseYaw
+    emotionTest.Details = emotion
+    
+    //let obj = {
+    // EyesOpn: eyes ? true : false,
+    // MouthOpn: mouth ? true :false,
+    // PosePitch: posePitch,
+    // PoseRoll : poseRoll,
+    // PoseYaw : poseYaw,
+    // Emotion : emotion
+    //   }
+    
+    //facesTest.DetailsExtra = obj//JSON.stringify(obj);
+    
+    console.log("Output object is: " + JSON.stringify([facesTest, eyesTest, mouthTest, pitchTest, rollTest, yawTest, emotionTest]))
+    
   } catch (e) {
     console.log(e);
     facesTest.Success = false;
     facesTest.Details = "Server error";
+    
+    eyesTest.Success = false;
+    eyesTest.Details = "Server error";
+    
+    mouthTest.Success = false;
+    mouthTest.Details = "Server error";
+    
+    pitchTest.Success = false;
+    pitchTest.Details = "Server error";
+
+    rollTest.Success = false;
+    rollTest.Details = "Server error";
+    
+    yawTest.Success = false;
+    yawTest.Details = "Server error";
+    
+    emotionTest.Success = false;
+    emotionTest.Details = "Server error";
   }
-  return facesTest;
+  return [facesTest, eyesTest, mouthTest, pitchTest, rollTest, yawTest, emotionTest];
 };
 
 const fetchLabels = async (imageBytes) => {
