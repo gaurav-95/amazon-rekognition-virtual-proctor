@@ -80,16 +80,20 @@ const fetchFaces = async (imageBytes) => {
   };
 
   const rollTest = {
-    TestName: "Roll Detection"
-  }
+    TestName: "Roll Detection",
+  };
 
   const yawTest = {
-    TestName: "Yaw Detection"
-  }
+    TestName: "Yaw Detection",
+  };
 
   const emotionTest = {
-    TestName: "Emotion Detection"
-  }
+    TestName: "Emotion Detection",
+  };
+
+  const eye1Test = {
+    TestName: "Eyes Detection",
+  };
 
   const detectFaces = () =>
     rekognition.detectFaces({ Image: { Bytes: imageBytes },
@@ -104,6 +108,7 @@ const fetchFaces = async (imageBytes) => {
     const poseRoll = faces.FaceDetails[0].Pose.Roll;
     const poseYaw = faces.FaceDetails[0].Pose.Yaw;
     const emotion = faces.FaceDetails[0].Emotions[0].Type;
+    const eye1 = faces.FaceDetails[0].Landmarks[0].Y;
 
     facesTest.Success = nFaces === 1;
     eyesTest.Success = eyes ? true : false;
@@ -112,6 +117,7 @@ const fetchFaces = async (imageBytes) => {
     rollTest.Success = poseRoll ? true : false;
     yawTest.Success = poseYaw ? true : false;
     emotionTest.Success = emotion ? true : false;
+    eye1Test.Success = eye1 ? true : false;
 
     facesTest.Details = nFaces;
     eyesTest.Details = eyes ? "Yes" : "No"
@@ -120,19 +126,9 @@ const fetchFaces = async (imageBytes) => {
     rollTest.Details = poseRoll
     yawTest.Details = poseYaw
     emotionTest.Details = emotion
+    eye1Test.Details = eye1
     
-    //let obj = {
-    // EyesOpn: eyes ? true : false,
-    // MouthOpn: mouth ? true :false,
-    // PosePitch: posePitch,
-    // PoseRoll : poseRoll,
-    // PoseYaw : poseYaw,
-    // Emotion : emotion
-    //   }
-    
-    //facesTest.DetailsExtra = obj//JSON.stringify(obj);
-    
-    console.log("Output object is: " + JSON.stringify([facesTest, eyesTest, mouthTest, pitchTest, rollTest, yawTest, emotionTest]))
+    console.log("Output object is: " + JSON.stringify([facesTest, eyesTest, mouthTest, pitchTest, rollTest, yawTest, emotionTest, eye1Test]))
     
   } catch (e) {
     console.log(e);
@@ -156,8 +152,11 @@ const fetchFaces = async (imageBytes) => {
     
     emotionTest.Success = false;
     emotionTest.Details = "Server error";
+
+    eye1Test.Success = false;
+    eye1Test.Details = "Server error";
   }
-  return [facesTest, eyesTest, mouthTest, pitchTest, rollTest, yawTest, emotionTest];
+  return [facesTest, eyesTest, mouthTest, pitchTest, rollTest, yawTest, emotionTest, eye1Test];
 };
 
 const fetchLabels = async (imageBytes) => {
